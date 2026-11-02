@@ -23,7 +23,7 @@ EXTENSION_NAMES = ("Image Grab", "Image Crawler")
 # allowed. Store installs don't record a folder path to match on, and newer
 # browsers may not record the name either. get.sh (the one-line setup on the
 # Atlas setup page) relies on this.
-STORE_IDS = []
+STORE_IDS = ["lciicdjofacohiefpggpfgicpjmngfad"]
 SUPPORT = os.path.expanduser("~/Library/Application Support")
 EXTENSION_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
