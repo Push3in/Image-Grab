@@ -149,7 +149,7 @@ Debugging in Dia, in order:
 - If the browser can't get the bytes, it falls back to the old way (`add` with the URL).
 - If an older helper answers "Unknown request" to `add-file`, the gallery falls back to links, so store users with a pre-2.3.1 helper still work as before. They get the file route after re-running the one-line setup (`get.sh` downloads the helper from GitHub `main`, so the helper must be pushed).
 - Overlay now opens in the browser's top layer (`popover="manual"` + `showPopover()` on the host), so sites' floating menus (e.g. anaudienceofone.co's Work/Home/Info tabs) can't draw over the gallery, even ones in the top layer or at max z-index. Considered moving controls left and downloads right; kept the bar centred.
-- Version 2.3.1, `dist/image-grab-2.3.1.zip` built (includes the top-layer fix).
+- Version 2.3.1 zip built with the file route; the top-layer fix went into **2.3.2** (`dist/image-grab-2.3.2.zip`, both changes), the version to submit.
 - Dia had the **store** version (2.3.0) installed, not the unpacked folder, so local changes need Load unpacked (then re-run `install.sh`) or a store update.
 
 ## Still to do
