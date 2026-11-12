@@ -148,7 +148,8 @@ Debugging in Dia, in order:
 - The helper writes the file to a temporary folder, calls Atlas's `import_files`, finds the new item by file name and sets its `source_url`, then deletes the temp file. The helper's message limit went from 1 MB to 48 MB, for `add-file` only (link requests are still capped at 1 MB).
 - If the browser can't get the bytes, it falls back to the old way (`add` with the URL).
 - If an older helper answers "Unknown request" to `add-file`, the gallery falls back to links, so store users with a pre-2.3.1 helper still work as before. They get the file route after re-running the one-line setup (`get.sh` downloads the helper from GitHub `main`, so the helper must be pushed).
-- Version 2.3.1, `dist/image-grab-2.3.1.zip` built.
+- Overlay now opens in the browser's top layer (`popover="manual"` + `showPopover()` on the host), so sites' floating menus (e.g. anaudienceofone.co's Work/Home/Info tabs) can't draw over the gallery, even ones in the top layer or at max z-index. Considered moving controls left and downloads right; kept the bar centred.
+- Version 2.3.1, `dist/image-grab-2.3.1.zip` built (includes the top-layer fix).
 - Dia had the **store** version (2.3.0) installed, not the unpacked folder, so local changes need Load unpacked (then re-run `install.sh`) or a store update.
 
 ## Still to do

@@ -21,10 +21,13 @@ function toggleOverlay(src) {
 
   const host = document.createElement('div');
   host.id = ID;
+  // The browser's top layer sits above every z-index on the page, including
+  // sites' own floating menus and popovers; opened last, ours is on top.
+  host.setAttribute('popover', 'manual');
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = `
     <style>
-      :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; }
+      :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; width: 100vw; height: 100vh; max-width: none; max-height: none; }
       .backdrop {
         position: fixed;
         inset: 0;
@@ -76,4 +79,5 @@ function toggleOverlay(src) {
   addEventListener('keydown', onKey, true);
   root.querySelector('.backdrop').addEventListener('click', close);
   html.append(host);
+  try { host.showPopover(); } catch {} // older browsers: the z-index still applies
 }
