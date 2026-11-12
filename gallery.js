@@ -1102,8 +1102,7 @@ async function copyLinks(items) {
 // ---------- Atlas ----------
 
 // Atlas refuses requests from browsers, so images go through a small local
-// helper (atlas-bridge/) that Chrome starts on demand. Atlas downloads each
-// URL itself, straight into the Inbox.
+// helper (atlas-bridge/) that Chrome starts on demand. Files land in the Inbox.
 const ATLAS_HOST = 'com.imagecrawler.atlas';
 
 function talkToAtlas(message, onProgress) {
@@ -1156,33 +1155,131 @@ function renderAtlasToast(job, finished) {
   });
 }
 
+// The browser downloads the file itself (with this site's cookies, so sites
+// that block anything but a real browser still work) and hands Atlas the
+// bytes. Only if that fails does Atlas get the web address to fetch on its own.
+const ATLAS_MAX_FILE = 32 * 1024 * 1024; // base64 must fit Chrome's 64 MB message cap with room
+const MIME_EXT = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+  'image/avif': 'avif', 'image/svg+xml': 'svg', 'image/bmp': 'bmp', 'image/tiff': 'tiff',
+  'image/heic': 'heic', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+};
+
+function isMediaBlob(blob) {
+  return blob && blob.size > 0 && blob.size <= ATLAS_MAX_FILE && /^(image|video)\//i.test(blob.type);
+}
+
+// Runs inside the page: same origin and cookies as the page itself.
+async function fetchInPage(url) {
+  try {
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!/^(image|video)\//i.test(blob.type) || blob.size > 32 * 1024 * 1024) return null;
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function downloadForAtlas(url) {
+  try {
+    const res = await fetch(url, { credentials: 'include' });
+    if (res.ok) {
+      const blob = await res.blob();
+      if (isMediaBlob(blob)) return blob;
+    }
+  } catch {}
+  if (/^data:/i.test(url)) return null;
+  // Got a check page instead of the image: ask the page to fetch it.
+  try {
+    const [first] = await chrome.scripting.executeScript({
+      target: { tabId: sourceTabId }, func: fetchInPage, args: [url],
+    });
+    if (first?.result) {
+      const blob = await (await fetch(first.result)).blob();
+      if (isMediaBlob(blob)) return blob;
+    }
+  } catch {}
+  return null;
+}
+
+function atlasFileName(url, blob) {
+  let name = '';
+  try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || ''); } catch {}
+  if (/^data:/i.test(url)) name = '';
+  const ext = MIME_EXT[blob.type.split(';')[0].toLowerCase()] || 'jpg';
+  const stem = name.replace(/\.[a-z0-9]+$/i, '') || 'image';
+  return `${stem}.${ext}`;
+}
+
+async function addOneToAtlas(entry) {
+  const url = entry.item.url;
+  const blob = await downloadForAtlas(url);
+  if (blob) {
+    const reply = await talkToAtlas({
+      type: 'add-file',
+      name: atlasFileName(url, blob),
+      data: await blobToBase64(blob),
+      url: /^https?:/i.test(url) ? url : undefined,
+    });
+    // Helpers installed before 2.3.1 only take links.
+    if (!(reply.type === 'error' && /Unknown request/i.test(reply.error))) return reply;
+  }
+  if (!/^https?:/i.test(url)) return { type: 'done', ok: false };
+  // Couldn't get the bytes here; let Atlas try the address itself.
+  let ok = false;
+  const reply = await talkToAtlas({ type: 'add', urls: [url] }, (msg) => { ok = msg.ok; });
+  return reply.type === 'done' ? { type: 'done', ok } : reply;
+}
+
 async function addToAtlas(items) {
   if (!items.length) return;
-  const job = items.map((item) => ({ item, name: rowName(item), status: 'Queued' }));
-  const byUrl = new Map(job.map((e) => [e.item.url, e]));
-  // Atlas fetches by web address, so images embedded in the page can't go.
-  for (const e of job) e.status = /^https?:/i.test(e.item.url) ? 'Adding' : 'Failed';
-  const urls = job.filter((e) => e.status === 'Adding').map((e) => e.item.url);
+  const job = items.map((item) => ({ item, name: rowName(item), status: 'Adding' }));
   renderAtlasToast(job, false);
 
-  // The helper takes at most 500 links per request.
-  let reply = { type: 'done' };
-  for (let i = 0; i < urls.length && reply.type !== 'error'; i += 500) {
-    reply = await talkToAtlas({ type: 'add', urls: urls.slice(i, i + 500) }, (msg) => {
-      const entry = byUrl.get(msg.url);
-      if (!entry) return;
-      entry.status = msg.ok ? 'Done' : 'Failed';
+  let fatal = null;
+  let next = 0;
+  async function worker() {
+    while (next < job.length && !fatal) {
+      const entry = job[next++];
+      let reply;
+      try {
+        reply = await addOneToAtlas(entry);
+      } catch (err) {
+        reply = { type: 'error', error: err.message, perItem: true };
+      }
+      // A missing helper fails every image the same way: stop and say so once.
+      if (reply.type === 'error' && /not found|forbidden|helper stopped|Reload Image Grab/i.test(reply.error)) {
+        fatal = reply;
+      }
+      entry.status = reply.type === 'done' && reply.ok !== false ? 'Done' : 'Failed';
       renderAtlasToast(job, false);
-    });
+    }
   }
+  await Promise.all([worker(), worker(), worker()]);
 
-  if (reply.type === 'error') {
+  if (fatal) {
     for (const e of job) if (e.status === 'Adding') e.status = 'Failed';
-    const notInstalled = /not found|forbidden/i.test(reply.error);
+    const notInstalled = /not found|forbidden/i.test(fatal.error);
     showToast({
       icon: 'warn',
       title: notInstalled ? 'Atlas helper isn’t set up' : 'Couldn’t reach Atlas',
-      sub: notInstalled ? 'Run atlas-bridge/install.sh once' : reply.error,
+      sub: notInstalled ? 'Run atlas-bridge/install.sh once' : fatal.error,
       rows: job.map((e) => [e.name, e.status]),
       autoHide: 8000,
     });

@@ -11,6 +11,10 @@ in Atlas just works.
 
 Messages from the extension:
   {"type": "add", "urls": [...], "collection": "Inbox"?}
+  {"type": "add-file", "name": ..., "data": base64, "url": source?}
+                                           -> bytes the browser already
+                                              downloaded (works on sites that
+                                              block anything but a browser)
   {"type": "reveal"}                       -> show the Inbox in Atlas
   {"type": "ping"}                         -> just answers, so the extension
                                               knows the helper is installed
@@ -19,7 +23,10 @@ Messages back:
   {"type": "done"} / {"type": "error", "error": ...}
 """
 
+import base64
 import glob
+import re
+import tempfile
 import ipaddress
 import json
 import os
@@ -38,7 +45,12 @@ ENDPOINT = "http://127.0.0.1:50473/mcp"
 PARALLEL = 3  # Atlas downloads are slow; a few at once keeps it moving
 MAX_URLS = 500
 MAX_URL_LENGTH = 4096
-MAX_MESSAGE_BYTES = 1024 * 1024
+MAX_MESSAGE_BYTES = 48 * 1024 * 1024  # Chrome's own cap is 64 MB; one file per message
+MAX_LINK_MESSAGE_BYTES = 1024 * 1024
+FILE_TYPES = {
+    "jpg", "jpeg", "png", "gif", "webp", "avif", "heic", "heif", "bmp", "tif", "tiff", "svg",
+    "mp4", "m4v", "mov", "webm",
+}
 TOKEN_GLOBS = [
     "~/Library/Mobile Documents/com~apple~CloudDocs/*.atlaslibrary/.mcp-token",
     "~/Library/Mobile Documents/com~apple~CloudDocs/*/*.atlaslibrary/.mcp-token",
@@ -54,6 +66,7 @@ LOG = os.path.expanduser("~/Library/Logs/ImageCrawler-Atlas.log")
 TOKEN_CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "token")
 
 write_lock = threading.Lock()
+LAST_MESSAGE_BYTES = [0]
 
 
 def log(text):
@@ -71,6 +84,7 @@ def read_message():
     if len(header) < 4:
         return None
     length = struct.unpack("<I", header)[0]
+    LAST_MESSAGE_BYTES[0] = length
     if length > MAX_MESSAGE_BYTES:
         return None
     return json.loads(sys.stdin.buffer.read(length).decode("utf-8"))
@@ -205,6 +219,63 @@ def add_images(urls, collection):
         list(pool.map(save, urls))
 
 
+def safe_file_name(name):
+    """Keep a readable name but nothing that could point outside our folder."""
+    name = os.path.basename(str(name or "")).strip()
+    name = re.sub(r"[^\w .()+-]", "_", name)[:120].lstrip(".") or "image"
+    stem, ext = os.path.splitext(name)
+    ext = ext[1:].lower()
+    if ext not in FILE_TYPES:
+        raise AtlasError("Not an image or video file")
+    return stem or "image", ext
+
+
+def add_file(name, data, source_url, collection):
+    stem, ext = safe_file_name(name)
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except Exception:
+        raise AtlasError("The file arrived damaged")
+    if not raw:
+        raise AtlasError("The file is empty")
+    ensure_atlas_running()
+    atlas = Atlas()
+    folder = tempfile.mkdtemp(prefix="image-grab-")
+    path = os.path.join(folder, "%s.%s" % (stem, ext))
+    try:
+        with open(path, "wb") as f:
+            f.write(raw)
+        arguments = {"paths": [path]}
+        if collection:
+            arguments["collection"] = collection
+        result = json.loads(atlas.call("import_files", arguments) or "{}")
+        if result.get("skipped_unsupported"):
+            raise AtlasError("Atlas can't open this file type")
+        if result.get("failed"):
+            raise AtlasError(str(result["failed"][0].get("reason", "Atlas couldn't read the file")))
+        if result.get("imported") and source_url:
+            tag_source(atlas, os.path.basename(path), source_url)
+    finally:
+        try:
+            os.remove(path)
+            os.rmdir(folder)
+        except OSError:
+            pass
+
+
+def tag_source(atlas, file_name, source_url):
+    """Imported files have no web address; give the new item its source back."""
+    try:
+        found = json.loads(atlas.call("search_items", {
+            "query": file_name, "added_within_days": 1, "limit": 5}, timeout=15))
+        for item in found.get("items", []):
+            if item.get("name") == file_name:
+                atlas.call("set_metadata", {"item_id": item["id"], "source_url": source_url}, timeout=15)
+                return
+    except Exception as err:  # nice to have; the image is already in
+        log("couldn't set source for %s: %s" % (file_name, err))
+
+
 def reveal():
     ensure_atlas_running()
     Atlas().call("show_in_app", {"view": "inbox"}, timeout=15)
@@ -235,6 +306,8 @@ def main():
     if not isinstance(message, dict):
         return
     kind = message.get("type")
+    if kind != "add-file" and LAST_MESSAGE_BYTES[0] > MAX_LINK_MESSAGE_BYTES:
+        return
     urls = message.get("urls", [])
     try:
         if kind == "add":
@@ -250,6 +323,18 @@ def main():
                           "error": "Only public web images can be added"})
             log("request: add (%d urls, %d refused)" % (len(urls), len(urls) - len(allowed)))
             add_images(allowed, collection)
+        elif kind == "add-file":
+            collection = message.get("collection")
+            if collection is not None and not (isinstance(collection, str) and len(collection) <= 200):
+                raise AtlasError("Invalid collection name")
+            source = message.get("url")
+            source = source if is_public_web_url(source) else None
+            log("request: add-file %s" % (source or message.get("name")))
+            try:
+                add_file(message.get("name"), message.get("data", ""), source, collection)
+            except Exception as err:
+                log("failed file %s: %s" % (source or message.get("name"), err))
+                raise
         elif kind == "reveal":
             log("request: reveal")
             reveal()

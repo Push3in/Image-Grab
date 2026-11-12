@@ -141,6 +141,16 @@ Debugging in Dia, in order:
 - Tested in headless Chrome with a stubbed `chrome` API (gallery page plus a test page in an iframe, served with HTTP range support, which video seeking needs). Sample clips made with macOS `avconvert` (ffmpeg isn't installed).
 - `dist/image-grab-2.3.0.zip` built. Store description, single purpose and `downloads` justification now mention videos (no formats or site names, after the keyword-spam rejection). Submitted to the Chrome Web Store as an update on 2026-10-25.
 
+## 13. Add to Atlas sends files, not links (2026-11-12)
+
+- Some sites (e.g. SiteGround hosting) answer anything but a real browser with a CAPTCHA page (`/.well-known/sgcaptcha/`). Atlas downloaded that HTML instead of the image, so every Add to Atlas failed with "Nothing downloadable found".
+- Now the gallery downloads each file itself with the browser's cookies (`fetch` with `credentials: 'include'`; if that returns a non-image, it fetches again inside the page with `chrome.scripting`), then sends the bytes as base64 in an `add-file` message, one file per message, 3 at a time, up to 32 MB per file. Embedded `data:` images can now be added too.
+- The helper writes the file to a temporary folder, calls Atlas's `import_files`, finds the new item by file name and sets its `source_url`, then deletes the temp file. The helper's message limit went from 1 MB to 48 MB, for `add-file` only (link requests are still capped at 1 MB).
+- If the browser can't get the bytes, it falls back to the old way (`add` with the URL).
+- If an older helper answers "Unknown request" to `add-file`, the gallery falls back to links, so store users with a pre-2.3.1 helper still work as before. They get the file route after re-running the one-line setup (`get.sh` downloads the helper from GitHub `main`, so the helper must be pushed).
+- Version 2.3.1, `dist/image-grab-2.3.1.zip` built.
+- Dia had the **store** version (2.3.0) installed, not the unpacked folder, so local changes need Load unpacked (then re-run `install.sh`) or a store update.
+
 ## Still to do
 
 1. ~~Upload `dist/image-grab-2.2.0.zip` to the Chrome Web Store.~~ Submitted for review on 2026-10-20 (in-depth review expected because of the all-sites host permission). Rejected on 2026-10-22 for "Keyword Spam" (violation "Yellow Argon"): the list of formats "JPG, PNG, GIF, WebP, AVIF, SVG, ICO" in the description. Removed it ("Filter by file type and minimum size"); resubmitted with the new description on 2026-10-22 (same 2.2.0 package), then approved and published. Avoid lists of formats, sites or keywords in store text.
