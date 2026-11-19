@@ -42,13 +42,13 @@ function toggleOverlay(src) {
         top: 4vh;
         width: 95vw;
         height: 92vh;
-        background: #fff;
+        background: transparent; /* the gallery paints its own white; a white panel showed as a fringe round the grey viewer */
         border-radius: 24px;
         overflow: hidden;
         box-shadow: 0 40px 100px rgba(0, 0, 0, 0.28), 0 8px 24px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
         animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
       }
-      iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; color-scheme: light; }
+      iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: light; }
       .closing .backdrop { opacity: 0; transition: opacity 0.2s ease; }
       .closing .panel { opacity: 0; transform: translateY(12px) scale(0.98); transition: opacity 0.2s ease, transform 0.2s ease; }
       @keyframes fade { from { opacity: 0; } }

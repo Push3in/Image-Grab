@@ -1409,6 +1409,7 @@ function setViewerItem(index) {
     els.viewerImg.src = item.url;
   }
   updateViewerLabels();
+  preloadNeighbours();
 }
 
 // Plays with sound when the browser allows it, otherwise starts muted.
@@ -1451,9 +1452,63 @@ async function openViewer(item) {
   if (!viewerClosing && !els.viewer.hidden) els.viewerVideo.controls = true;
 }
 
-function stepViewer(delta) {
+// ← → switch: the old photo fades out and slides away while the new one fades
+// and slides in. Both carry the shadow, so it never blinks off.
+const STEP_MS = 300;
+const STEP_OUT_MS = 150;
+let neighbours = [];
+
+// Load the photos either side ahead of time, so ← → can start instantly.
+function preloadNeighbours() {
+  const count = state.visible.length;
+  neighbours = [-1, 1].map((d) => state.visible[(state.viewerIndex + d + count) % count])
+    .filter((it) => it && it.kind !== 'video')
+    .map((it) => { const im = new Image(); im.src = it.url; im.decode().catch(() => {}); return im; });
+}
+let stepToken = 0;
+let stepGhost = null;
+let stepTarget = -1; // where quick repeated presses are heading
+
+function dropStepGhost() {
+  stepGhost?.remove();
+  stepGhost = null;
+}
+
+async function stepViewer(delta) {
   if (els.viewer.hidden || viewerClosing) return;
-  setViewerItem(state.viewerIndex + delta);
+  const token = ++stepToken;
+  const count = state.visible.length;
+  const from = stepTarget >= 0 ? stepTarget : state.viewerIndex;
+  const target = (from + delta + count) % count;
+  stepTarget = target;
+  const next = state.visible[target];
+  // Get the next photo decoded first so it never fades in half-drawn.
+  if (next?.kind !== 'video') {
+    const pre = new Image();
+    pre.src = next.url;
+    await Promise.race([pre.decode().catch(() => {}), sleep(150)]);
+    if (token !== stepToken || els.viewer.hidden || viewerClosing) return;
+  }
+  stepTarget = -1;
+
+  // Freeze a copy of the current photo where it is, to fade out.
+  dropStepGhost();
+  const ghost = els.viewerCard.cloneNode(true);
+  ghost.removeAttribute('id');
+  ghost.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  ghost.querySelector('video')?.removeAttribute('src');
+  ghost.style.pointerEvents = 'none';
+  ghost.style.transform = getComputedStyle(els.viewerCard).transform;
+  ghost.style.opacity = getComputedStyle(els.viewerCard).opacity;
+  els.viewerCard.before(ghost);
+  stepGhost = ghost;
+  // Old photo leaves in half the time the new one takes to arrive; both start now.
+  ghost.animate(
+    [{ transform: `translateX(${-delta * 8}px)`, opacity: 0 }],
+    { duration: STEP_OUT_MS, easing: 'cubic-bezier(0.33, 1, 0.68, 1)', fill: 'forwards' },
+  ).finished.then(() => { if (stepGhost === ghost) dropStepGhost(); }, () => {});
+
+  setViewerItem(target);
   const item = viewerItem();
   item.el.classList.add('ghost');
   viewerAnim?.cancel();
@@ -1461,7 +1516,7 @@ function stepViewer(delta) {
   placeViewerCard(viewerTargetRect(item));
   viewerAnim = els.viewerCard.animate(
     [{ opacity: 0, transform: `translateX(${delta * 28}px)` }, { opacity: 1, transform: 'none' }],
-    { duration: SPRING_OPEN.duration, easing: SPRING_OPEN.easing },
+    { duration: STEP_MS, easing: SPRING_OPEN.easing },
   );
 }
 
@@ -1477,6 +1532,8 @@ function revealTile(item) {
 async function closeViewer() {
   if (els.viewer.hidden || viewerClosing) return;
   viewerClosing = true;
+  stepTarget = -1;
+  dropStepGhost();
   // Let clicks fall through to the grid while the image flies home, so the
   // next photo can be opened without waiting for the spring to settle.
   els.viewer.classList.add('closing');
@@ -1496,6 +1553,8 @@ async function closeViewer() {
 
 function finishClose() {
   viewerItem()?.el.classList.remove('ghost');
+  stepTarget = -1;
+  dropStepGhost();
   els.viewer.hidden = true;
   els.viewer.classList.remove('closing');
   els.viewerVideo.pause();
@@ -1599,6 +1658,12 @@ els.selCopy.addEventListener('click', () => copyLinks(selectedItems()));
 els.selAll.addEventListener('click', () => selectAll(!(state.visible.length && state.visible.every((i) => i.selected))));
 els.selClear.addEventListener('click', () => setSelectMode(false));
 
+// Arrow keys light up the matching on-screen arrow for a moment, like a click.
+function flashNav(btn) {
+  btn.classList.add('pressed');
+  clearTimeout(btn.pressedTimer);
+  btn.pressedTimer = setTimeout(() => btn.classList.remove('pressed'), 150);
+}
 els.viewerPrev.addEventListener('click', () => stepViewer(-1));
 els.viewerNext.addEventListener('click', () => stepViewer(1));
 els.viewerClose.addEventListener('click', closeViewer);
@@ -1641,8 +1706,8 @@ document.addEventListener('keydown', (e) => {
   if (typing) return;
 
   if (viewerOpen) {
-    if (e.key === 'ArrowLeft') stepViewer(-1);
-    else if (e.key === 'ArrowRight') stepViewer(1);
+    if (e.key === 'ArrowLeft') { flashNav(els.viewerPrev); stepViewer(-1); }
+    else if (e.key === 'ArrowRight') { flashNav(els.viewerNext); stepViewer(1); }
     else if (e.key === ' ') { e.preventDefault(); closeViewer(); }
     return;
   }

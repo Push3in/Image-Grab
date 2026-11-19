@@ -16,6 +16,9 @@
   --red: #e5484d;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 30px rgba(0, 0, 0, 0.1);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --viewer-bg: #555555;
+  --viewer-btn: rgb(122 122 122 / 0.9);       /* #7A7A7A at 90% */
+  --viewer-btn-hover: rgb(136 136 136 / 0.9); /* #888888 at 90% */
 }
 
 * { box-sizing: border-box; }
@@ -483,7 +486,9 @@ kbd { font: inherit; color: var(--muted); }
   inset: 0;
   /* No backdrop blur: under 96% white it was invisible but re-blurred the
      whole grid every frame of the fade. */
-  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  /* Grey, not white: mid-step the old photo fades out before the new one is
+     in, and white showing through read as a flash. */
+  background: color-mix(in srgb, var(--viewer-bg) 95%, transparent);
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -507,7 +512,7 @@ kbd { font: inherit; color: var(--muted); }
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
   will-change: opacity;
 }
-#viewer-img, #viewer-video {
+.viewer-card > img, .viewer-card > video {
   position: relative;
   display: block;
   width: 100%;
@@ -541,11 +546,20 @@ kbd { font: inherit; color: var(--muted); }
   height: 40px;
   border: none;
   border-radius: 12px;
-  background: var(--soft);
+  background: var(--viewer-btn);
+  color: #fff;
   display: grid;
   place-items: center;
+  transition: background-color 0.12s ease;
 }
-.viewer-nav:hover, .viewer-close:hover { background: var(--hover); }
+/* White text on #7A7A7A; hover and press go a step lighter so a click shows */
+.viewer-nav:hover, .viewer-close:hover,
+.viewer-nav:active, .viewer-close:active, .viewer-nav.pressed { background: var(--viewer-btn-hover); }
+.viewer-actions .pill { background: var(--viewer-btn); color: #fff; transition: background-color 0.12s ease; }
+.viewer-actions .pill:hover, .viewer-actions .pill:active { background: var(--viewer-btn-hover); }
+.viewer-actions .pill.active { background: var(--ink); }
+#viewer-title { color: #ffffff; }
+#viewer-meta { color: rgba(255, 255, 255, 0.7); }
 .viewer-nav svg { width: 20px; height: 20px; }
 .viewer-close svg { width: 16px; height: 16px; }
 .viewer-nav.prev { left: 28px; top: 50%; transform: translateY(-50%); }
